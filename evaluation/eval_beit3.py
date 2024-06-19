@@ -5,8 +5,8 @@ import time
 from evaluation import compute_sim, i2t, t2i
 
 def evaluate():
-    img_feats_path = "knowledgevec/f30k_beit3_large_image_feats.pkl"
-    txt_feats_path = "knowledgevec/f30k_beit3_large_text_feats.pkl"
+    img_feats_path = "kdvector/f30k_beit3_large_image_feats.pkl"
+    txt_feats_path = "kdvector/f30k_beit3_large_text_feats.pkl"
     print("======>load data")
     with open(img_feats_path, 'rb') as f:
         teacher_vectors_image = pickle.load(f)
@@ -18,7 +18,6 @@ def evaluate():
     cap_embs = cap_embs.numpy()
     img_embs = img_embs.numpy()
     img_embs = np.array([img_embs[i] for i in range(0, len(img_embs), 5)])
-
 
     start = time.time()
     sims = compute_sim(img_embs, cap_embs)

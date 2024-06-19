@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import pickle
-from student_model import KDModel
-from student_dataset import Flickr30kDataset, DataLoader
+from module.model import KDModel
+from module.dataset import Flickr30kDataset, DataLoader
 import argparse
 from transformers import AlbertModel, AlbertTokenizer
 from timm import create_model
