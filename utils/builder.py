@@ -6,6 +6,7 @@ import wandb
 import torch
 from collections import OrderedDict
 from module.model import KDModel
+from evaluation.eval import eval_f30k, eval_coco
 
 def load_data(args):
     print("===============>load data")
@@ -65,3 +66,11 @@ def model_init(args):
     model = torch.nn.DataParallel(model)
     model.module = model.module.cuda()
     return model
+
+def eval(model, args, val_loader):
+    model.module.eval()
+    if args.task == 'coco':
+        rsum = eval_coco(model, val_loader)
+    elif args.task == 'flickr30k':
+        rsum = eval_f30k(model, val_loader)
+    return rsum

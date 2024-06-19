@@ -3,6 +3,33 @@ import torch.nn as nn
 from torch.autograd import Variable
 
 
+class ContrastiveLoss(nn.Module):
+    def __init__(self, t=0.05):
+        super(ContrastiveLoss, self).__init__()
+        self.T = t
+
+    def forward(self, stu_img, stu_txt, tea_img, tea_txt):
+            """Compute the loss given pairs of image and caption embeddings
+            """
+            # intra-modal
+            img_pos = torch.einsum('nc,nc->n', [stu_img, tea_img]).unsqueeze(-1)
+            img_neg = torch.einsum('nc,ck->nk', [stu_img, self.i_queue.clone().detach()])
+            txt_pos = torch.einsum('nc,nc->n', [stu_txt, tea_txt]).unsqueeze(-1)
+            txt_neg = torch.einsum('nc,ck->nk', [stu_txt, self.t_queue.clone().detach()])
+
+            # logits: Nx(1+K)
+            img_logits = torch.cat([img_pos, img_neg], dim=1)
+            txt_logits = torch.cat([txt_pos, txt_neg], dim=1)
+            img_logits = img_logits / self.T
+            txt_logits = txt_logits / self.T
+            intra_labels = torch.zeros(img_logits.shape[0], dtype=torch.long).cuda()
+            img_loss = nn.CrossEntropyLoss().cuda()(img_logits, intra_labels)
+            txt_loss = nn.CrossEntropyLoss().cuda()(txt_logits, intra_labels)
+
+            loss = img_loss + txt_loss
+            return loss, img_loss, txt_loss
+
+
 class TriptLoss(nn.Module):
     """
     Compute contrastive loss (max-margin based)

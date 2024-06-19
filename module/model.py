@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from transformers import ViTModel, ViTConfig
 from transformers import BertModel, BertTokenizer
-from module.tript_loss import TriptLoss
+from module.loss import TriptLoss, ContrastiveLoss
     
 class Bert_base(nn.Module):
     def __init__(self, output_dim):
@@ -55,7 +55,10 @@ class KDModel(nn.Module):
         self.register_buffer("i_queue_ptr", torch.zeros(1, dtype=torch.long))
 
         # define tript loss
-        self.tript_loss = TriptLoss(opt=args)
+        self.con = ContrastiveLoss(t=self.T)
+        self.hnd = TriptLoss(opt=args)
+        self.l1 = nn.L1Loss()
+        self.cos= nn.CosineSimilarity(dim=1, eps=1e-6)
 
     def forward(self, images, input_ids, attention_mask):
         img_fea = self.img_encoder(images)
@@ -65,40 +68,6 @@ class KDModel(nn.Module):
         img_fea = nn.functional.normalize(img_fea, dim=1)
         txt_fea = nn.functional.normalize(txt_fea, dim=1)
         return img_fea, txt_fea
-
-    def contrastive_loss(self, stu_img, stu_txt, tea_img, tea_txt):
-        """Compute the loss given pairs of image and caption embeddings
-        """
-        # intra-modal
-        img_pos = torch.einsum('nc,nc->n', [stu_img, tea_img]).unsqueeze(-1)
-        img_neg = torch.einsum('nc,ck->nk', [stu_img, self.i_queue.clone().detach()])
-        txt_pos = torch.einsum('nc,nc->n', [stu_txt, tea_txt]).unsqueeze(-1)
-        txt_neg = torch.einsum('nc,ck->nk', [stu_txt, self.t_queue.clone().detach()])
-        # inter-modal
-        i2t_pos = torch.einsum('nc,nc->n', [stu_img, tea_txt]).unsqueeze(-1)
-        i2t_neg = torch.einsum('nc,ck->nk', [stu_img, self.t_queue.clone().detach()])
-        t2i_pos = torch.einsum('nc,nc->n', [stu_txt, tea_img]).unsqueeze(-1)
-        t2i_neg = torch.einsum('nc,ck->nk', [stu_txt, self.i_queue.clone().detach()])
-
-        # logits: Nx(1+K)
-        img_logits = torch.cat([img_pos, img_neg], dim=1)
-        txt_logits = torch.cat([txt_pos, txt_neg], dim=1)
-        img_logits = img_logits / self.T
-        txt_logits = txt_logits / self.T
-        intra_labels = torch.zeros(img_logits.shape[0], dtype=torch.long).cuda()
-        img_loss = nn.CrossEntropyLoss().cuda()(img_logits, intra_labels)
-        txt_loss = nn.CrossEntropyLoss().cuda()(txt_logits, intra_labels)
-        
-        i2t_logits = torch.cat([i2t_pos, i2t_neg], dim=1)
-        t2i_logits = torch.cat([t2i_pos, t2i_neg], dim=1)
-        i2t_logits = i2t_logits / self.T
-        t2i_logits = t2i_logits / self.T
-        inter_labels = torch.zeros(i2t_logits.shape[0], dtype=torch.long).cuda()
-        i2t_loss = nn.CrossEntropyLoss().cuda()(i2t_logits, inter_labels)
-        t2i_loss = nn.CrossEntropyLoss().cuda()(t2i_logits, inter_labels)
-
-        loss = img_loss + txt_loss + i2t_loss + t2i_loss
-        return loss, img_loss, txt_loss, i2t_loss, t2i_loss
     
     @torch.no_grad()
     def _dequeue_and_enqueue(self, i_keys, t_keys):
@@ -116,6 +85,29 @@ class KDModel(nn.Module):
 
         self.i_queue_ptr[0] = i_ptr
         self.t_queue_ptr[0] = t_ptr
+
+    def forward_loss(self, stu_img, stu_txt, tea_img, tea_txt):
+        # contrastive loss
+        con_loss = self.contrastive_loss(stu_img, stu_txt, tea_img, tea_txt)
+
+        # l1 loss
+        l1_img_loss = self.l1(stu_img, tea_img)
+        l1_txt_loss = self.l1(stu_txt, tea_txt)
+        l1_loss = l1_img_loss + l1_txt_loss
+
+        # cosine similarity loss
+        cos_img_loss = 1 - ((self.cos(stu_img, tea_img).mean()+1)/2)
+        cos_txt_loss = 1 - ((self.cos(stu_txt, tea_txt).mean()+1)/2)
+        cos_loss = cos_img_loss + cos_txt_loss
+
+        # hard negative loss
+        img_kd_tript_loss = self.tript_loss(stu_img, tea_img)
+        txt_kd_tript_loss = self.tript_loss(stu_txt, tea_txt)
+        i2t_kd_tript_loss = self.tript_loss(stu_img, tea_txt)
+        t2i_kd_tript_loss = self.tript_loss(stu_txt, tea_img)
+        tript_loss = img_kd_tript_loss + txt_kd_tript_loss + i2t_kd_tript_loss + t2i_kd_tript_loss
+
+        return con_loss, l1_loss, cos_loss, tript_loss
 
 
 class WO_Distillation_Model(nn.Module):
